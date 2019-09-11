@@ -3,6 +3,7 @@ use positioned_io::{ReadAt, WriteAt};
 use proof::Proof;
 use rayon::prelude::*;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::ops::{self, Index};
@@ -97,9 +98,17 @@ pub trait Store<E: Element>:
     /// Creates a new store which can store up to `size` elements.
     // FIXME: Return errors on failure instead of panicking
     //  (see https://github.com/filecoin-project/merkle_light/issues/19).
-    fn new(size: usize) -> Self;
+    fn new(size: usize) -> Self {
+        Self::new_with_path(size, None)
+    }
+
+    // FIXME: This should be able to return an error and not panic
+    // if the `open` fails.
+    fn new_with_path(size: usize, path: Option<&Path>) -> Self;
 
     fn new_from_slice(size: usize, data: &[u8]) -> Self;
+
+    fn load_from_path(path: &Path) -> Self;
 
     fn write_at(&mut self, el: E, i: usize);
 
@@ -134,8 +143,15 @@ impl<E: Element> ops::Deref for VecStore<E> {
 }
 
 impl<E: Element> Store<E> for VecStore<E> {
-    fn new(size: usize) -> Self {
+    fn new_with_path(size: usize, path: Option<&Path>) -> Self {
+        if path.is_some() {
+            unimplemented!("Creating a new VecStore from a file is not supported");
+        }
         VecStore(Vec::with_capacity(size))
+    }
+
+    fn load_from_path(path: &Path) -> Self {
+        unimplemented!("");
     }
 
     fn write_at(&mut self, el: E, i: usize) {
@@ -226,11 +242,21 @@ impl<E: Element> ops::Deref for DiskStore<E> {
 
 impl<E: Element> Store<E> for DiskStore<E> {
     #[allow(unsafe_code)]
-    fn new(size: usize) -> Self {
+    fn new_with_path(size: usize, path: Option<&Path>) -> Self {
         let byte_len = E::byte_len() * size;
-        let file = tempfile().expect("couldn't create temp file");
-        file.set_len(byte_len as u64)
-            .unwrap_or_else(|_| panic!("couldn't set len of {}", byte_len));
+        let file = match path {
+            None => {
+                let file = tempfile().expect("couldn't create temp file");
+                file.set_len(byte_len as u64)
+                    .unwrap_or_else(|_| panic!("couldn't set len of {}", byte_len));
+                file
+            }
+            Some(path) => OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("failed to create file"),
+        };
 
         DiskStore {
             len: 0,
@@ -238,6 +264,10 @@ impl<E: Element> Store<E> for DiskStore<E> {
             file,
             store_size: byte_len,
         }
+    }
+
+    fn load_from_path(path: &Path) -> Self {
+        unimplemented!("");
     }
 
     fn new_from_slice(size: usize, data: &[u8]) -> Self {
